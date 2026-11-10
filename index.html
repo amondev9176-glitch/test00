@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>나의 작은 메모장</title>
+  <style>
+    /* CSS: 화면의 색상, 크기, 배치를 정합니다. */
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f4f0; color: #263d36; font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; line-height: 1.6; }
+    main { max-width: 1000px; margin: auto; padding: 64px 24px; }
+    .eyebrow { color: #657c70; font-size: 12px; font-weight: 700; letter-spacing: .18em; }
+    h1 { margin: 8px 0; font-size: clamp(30px, 5vw, 42px); letter-spacing: -.05em; }
+    .intro { margin: 0 0 24px; color: #63716b; }
+    .notice { background: #ebece2; border-radius: 12px; padding: 12px 16px; font-size: 14px; margin-bottom: 32px; }
+    .layout { display: grid; grid-template-columns: 340px 1fr; gap: 28px; align-items: start; }
+    form { background: white; padding: 26px; border: 1px solid #e2e5de; border-radius: 20px; }
+    h2 { font-size: 19px; margin: 0 0 20px; }
+    label { display: block; margin: 16px 0 8px; font-weight: 600; font-size: 14px; }
+    label span { font-weight: 400; color: #6d7972; }
+    input, textarea { display: block; width: 100%; border: 1px solid #d4dcd5; border-radius: 10px; padding: 12px; font: inherit; color: inherit; background: #fdfdfb; }
+    textarea { min-height: 190px; resize: vertical; }
+    :focus-visible { outline: 3px solid #8db9a0; outline-offset: 3px; }
+    button { cursor: pointer; font: inherit; border-radius: 10px; }
+    .add { width: 100%; padding: 12px; border: 0; background: #2e624d; color: white; font-weight: 600; margin-top: 20px; }
+    .add:hover { background: #234c3c; }
+    .list-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .list-heading h2 { margin: 0; }
+    #count { color: #68796f; font-size: 14px; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+    .note { background: #fff; border: 1px solid #e2e5de; border-radius: 16px; padding: 22px; }
+    .note h3 { margin: 0 0 10px; font-size: 18px; overflow-wrap: anywhere; }
+    .note p { margin: 0 0 20px; white-space: pre-wrap; overflow-wrap: anywhere; color: #46574e; }
+    .note-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    time { color: #758078; font-size: 12px; }
+    .delete { border: 1px solid #e5dcd8; color: #985346; background: white; padding: 6px 12px; font-size: 13px; }
+    .delete:hover { background: #fff3ef; }
+    #empty { border: 1px dashed #cbd3ca; border-radius: 16px; text-align: center; padding: 58px 20px; color: #728076; }
+    #empty strong { display: block; color: #425b4e; margin-bottom: 8px; }
+    #status { min-height: 24px; margin: 14px 0 0; color: #2e624d; font-size: 14px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 720px) { main { padding: 32px 18px; } .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <!-- HTML: 화면에 표시할 내용을 정합니다. -->
+  <main>
+    <header>
+      <div class="eyebrow">MY LITTLE NOTEBOOK</div>
+      <h1>나의 작은 메모장</h1>
+      <p class="intro">떠오른 생각을 가볍게 적어 보세요.</p>
+    </header>
+    <p class="notice">메모는 Firestore에 저장됩니다. 현재는 로그인 없이 같은 목록을 사용하는 공용 연습용 메모장입니다.</p>
+    <div class="layout">
+      <form id="memo-form">
+        <h2>새 메모 쓰기</h2>
+        <label for="memo-title">제목 <span>(선택)</span></label>
+        <input id="memo-title" type="text" maxlength="100" placeholder="어떤 생각인가요?">
+        <label for="memo-content">메모 내용</label>
+        <textarea id="memo-content" required maxlength="10000" placeholder="기억하고 싶은 내용을 적어 주세요."></textarea>
+        <button class="add" type="submit" disabled>＋ 메모 추가</button>
+        <p id="status" role="status" aria-live="polite"></p>
+      </form>
+      <section aria-labelledby="list-title">
+        <div class="list-heading"><h2 id="list-title">내 메모</h2><span id="count">0개의 메모</span></div>
+        <p id="connection" role="status">Firebase에 연결하는 중입니다…</p>
+        <button id="retry" type="button" hidden>다시 불러오기</button>
+        <div id="empty" hidden><strong>아직 담긴 메모가 없어요.</strong>첫 번째 생각을 남겨 보세요.</div>
+        <ul id="memo-list" aria-label="메모 목록"></ul>
+      </section>
+    </div>
+  </main>
+  <script type="module">
+    // npm 없이 Firebase CDN에서 필요한 기능만 불러옵니다.
+    const form = document.getElementById('memo-form');
+    const titleInput = document.getElementById('memo-title');
+    const contentInput = document.getElementById('memo-content');
+    const list = document.getElementById('memo-list');
+    const status = document.getElementById('status');
+    const connection = document.getElementById('connection');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const retry = document.getElementById('retry');
+    let ready = false;
+
+    function showError(error, action) {
+      console.error(action, error);
+      const code = error.code || 'unknown';
+      const hint = code.includes('permission-denied')
+        ? 'Firestore 보안 규칙에서 읽기·쓰기 권한을 확인해 주세요.'
+        : code.includes('unavailable')
+        ? '인터넷 연결을 확인한 뒤 다시 시도해 주세요.'
+        : 'Firebase 설정과 Firestore 데이터베이스 생성 여부를 확인해 주세요.';
+      return `${action} (${code}). ${hint}`;
+    }
+
+    // 연결 전에도 기본 폼 제출로 페이지가 새로 열리지 않게 합니다.
+    form.addEventListener('submit', event => event.preventDefault());
+
+    try {
+      const { initializeApp } = await import(
+        'https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js'
+      );
+      const {
+        getFirestore, collection, addDoc, onSnapshot,
+        query, orderBy, serverTimestamp, doc, deleteDoc
+      } = await import(
+        'https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js'
+      );
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyDtTw6fXk0PphehLFzayyYsOkxwf1V6ns0",
+        authDomain: "test00-e35b2.firebaseapp.com",
+        projectId: "test00-e35b2",
+        storageBucket: "test00-e35b2.firebasestorage.app",
+        messagingSenderId: "297576879713",
+        appId: "1:297576879713:web:80b4f7818c7b0513e13c20"
+      };
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+      const memosRef = collection(db, 'memos');
+      const memosQuery = query(memosRef, orderBy('createdAt', 'desc'));
+      let unsubscribe;
+
+      function renderMemos(snapshot) {
+        list.replaceChildren();
+        document.getElementById('count').textContent = `${snapshot.size}개의 메모`;
+        document.getElementById('empty').hidden = !snapshot.empty;
+        snapshot.forEach(documentSnapshot => {
+          const memo = documentSnapshot.data();
+          const item = document.createElement('li');
+          item.className = 'note';
+          const heading = document.createElement('h3');
+          heading.textContent = memo.title || '제목 없는 메모';
+          const body = document.createElement('p');
+          // 입력한 HTML이 실행되지 않도록 textContent를 사용합니다.
+          body.textContent = memo.content || '';
+          const footer = document.createElement('div');
+          footer.className = 'note-footer';
+          const time = document.createElement('time');
+          const date = memo.createdAt?.toDate?.();
+          time.textContent = date ? date.toLocaleString('ko-KR') : '저장 중…';
+          if (date) time.dateTime = date.toISOString();
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'delete';
+          button.textContent = '삭제';
+          button.disabled = documentSnapshot.metadata.hasPendingWrites;
+          button.setAttribute('aria-label', `${heading.textContent} 메모 삭제`);
+          button.addEventListener('click', async () => {
+            if (!confirm('이 메모를 삭제할까요?')) return;
+            button.disabled = true;
+            status.textContent = '삭제 중입니다…';
+            try {
+              await deleteDoc(doc(db, 'memos', documentSnapshot.id));
+              status.textContent = 'Firestore에서 메모를 삭제했습니다.';
+              contentInput.focus();
+            } catch (error) {
+              status.textContent = showError(error, '삭제 실패');
+              button.disabled = false;
+            }
+          });
+          footer.append(time, button);
+          item.append(heading, body, footer);
+          list.append(item);
+        });
+      }
+
+      // 실시간으로 목록을 불러옵니다. 추가·삭제하면 화면도 자동 갱신됩니다.
+      function startListening() {
+        if (unsubscribe) unsubscribe();
+        retry.hidden = true;
+        connection.textContent = '목록을 불러오는 중입니다…';
+        unsubscribe = onSnapshot(memosQuery, { includeMetadataChanges: true }, snapshot => {
+          renderMemos(snapshot);
+          connection.textContent = snapshot.metadata.fromCache
+            ? '서버 연결을 기다리고 있습니다. 표시된 내용은 임시 상태일 수 있습니다.'
+            : 'Firestore와 연결되었습니다.';
+        }, error => {
+          connection.textContent = showError(error, '목록 불러오기 실패');
+          document.getElementById('empty').hidden = true;
+          retry.hidden = false;
+        });
+      }
+      retry.addEventListener('click', startListening);
+
+      form.addEventListener('submit', async () => {
+        if (!ready || submitButton.disabled) return;
+        const content = contentInput.value.trim();
+        if (!content) {
+          status.textContent = '메모 내용을 입력해 주세요.';
+          contentInput.focus();
+          return;
+        }
+        submitButton.disabled = true;
+        status.textContent = 'Firestore에 저장 중입니다…';
+        try {
+          await addDoc(memosRef, {
+            title: titleInput.value.trim() || '제목 없는 메모',
+            content,
+            createdAt: serverTimestamp()
+          });
+          // 서버 저장이 완료된 뒤 입력창을 비웁니다.
+          form.reset();
+          status.textContent = 'Firestore에 저장했습니다.';
+          contentInput.focus();
+        } catch (error) {
+          status.textContent = showError(error, '저장 실패');
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+      ready = true;
+      submitButton.disabled = false;
+      startListening();
+    } catch (error) {
+      connection.textContent = showError(error, 'Firebase 초기화 실패');
+      status.textContent = '인터넷 연결을 확인하고 페이지를 새로고침해 주세요.';
+    }
+  </script>
+</body>
+</html>
